@@ -1,0 +1,19 @@
+{
+  "name": "music-ally-services",
+  "version": "1.0.0",
+  "description": "Services for Music Ally",
+  "main": "server.js",
+  "repository": "git@github.com:BryceGraves/music-ally-services.git",
+  "author": "Bryce Graves <brycegraves97@gmail.com>",
+  "license": "MIT",
+  "dependencies": {
+    "aws-sdk": "^2.618.0",
+    "cors": "^2.8.5",
+    "express": "^4.17.1",
+    "multer": "^1.4.2",
+    "music-metadata": "^6.3.3"
+  },
+  "scripts": {
+    "start": "node server.js"
+  }
+}
