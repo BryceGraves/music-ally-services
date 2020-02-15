@@ -1,6 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 const mm = require('music-metadata');
+const uuid = require('uuid');
 const multer = require('multer');
 const app = express();
 const upload = multer();
@@ -9,42 +10,17 @@ const port = 8080;
 const AWS = require('aws-sdk');
 AWS.config.region = 'us-east-1';
 
-var sts = new AWS.STS();
-sts.assumeRole(
-  {
-    RoleArn: 'arn:aws:iam::576322095525:role/bryce',
-    RoleSessionName: 'music-ally-server',
-  },
-  (err, data) => {
-    if (err) {
-      // an error occurred
-      console.log('Cannot assume role');
-      console.log(err, err.stack);
-    } else {
-      // successful response
-      AWS.config.update({
-        accessKeyId: data.Credentials.AccessKeyId,
-        secretAccessKey: data.Credentials.SecretAccessKey,
-        sessionToken: data.Credentials.SessionToken,
-      });
-    }
-  }
-);
+const s3 = new AWS.S3({ apiVersion: '2006-03-01' });
 
 app.use(express.json());
 app.use(cors());
 
 app.get('/fetchSongs/:id', (req, res) => {
-  const s3 = new AWS.S3({ apiVersion: '2006-03-01' });
-
-  console.log(req.params.id);
-
+  const id = req.params.id;
   const getParams = {
     Bucket: 'bryce-graves',
-    Prefix: req.params.id,
+    Prefix: id,
   };
-
-  // TODO: get role for these? Or stick with using a user
 
   s3.listObjectsV2(getParams, (err, data) => {
     if (err) {
@@ -55,33 +31,54 @@ app.get('/fetchSongs/:id', (req, res) => {
           const [, artist, album, title] = bucketResource.Key.split('/');
           return { artist, album, title };
         })
-      ).then((resourceArray) => {
-        let resourceData = {};
-        resourceArray.forEach((resource) => {
-          const tempData = {};
-          const {
-            artist = resource.artist || 'Unknown',
-            album = resource.album || 'Unknown',
-            title = resource.title || 'Unknown',
-          } = resource;
+      )
+        .then((resourceArray) => {
+          let resourceData = {};
+          resourceArray.forEach((resource) => {
+            const tempData = {};
+            const {
+              artist = resource.artist || 'Unknown',
+              album = resource.album || 'Unknown',
+              title = resource.title || 'Unknown',
+            } = resource;
 
-          tempData[artist] = {};
-          tempData[artist][album] = [
-            {
-              name: title,
-              url: req.params.id + '/' + artist + '/' + album + '/' + title,
-            },
-          ];
+            tempData[artist] = {};
+            tempData[artist][album] = [
+              {
+                name: title,
+                key: id + '/' + artist + '/' + album + '/' + title,
+              },
+            ];
 
-          resourceData = { ...resourceData, ...tempData };
+            resourceData = { ...resourceData, ...tempData };
+          });
+          res.send(resourceData);
+        })
+        .catch((err) => {
+          console.log('Failed fetching songs: ', err);
+          res.status(500).send('Failed fetching songs');
         });
-        res.send(resourceData);
-      });
     }
   });
 });
 
-app.get('/fetchSong/');
+app.get('/fetchSong/:id/:artist/:album/:song', (req, res) => {
+  const { id, artist, album, song } = req.params;
+  const signedUrlPrams = {
+    Bucket: 'bryce-graves',
+    Key: id + '/' + artist + '/' + album + '/' + song,
+    Expires: 60 * 60,
+  };
+
+  s3.getSignedUrlPromise('getObject', signedUrlPrams)
+    .then((signedUrl) => {
+      res.send(signedUrl);
+    })
+    .catch((err) => {
+      console.log('Failed fetching signed url: ', err);
+      res.status(500).send('Failed fetching signed url');
+    });
+});
 
 app.post('/upload', upload.array(), (req, res, next) => {
   console.log('Main Body: ', req.body);
@@ -89,8 +86,9 @@ app.post('/upload', upload.array(), (req, res, next) => {
   res.send('Success');
 });
 
-app.post('/update', (req, res) => {
-  const s3 = new AWS.S3({ apiVersion: '2006-03-01' });
+app.post('/updateSong', (req, res) => {
+  const { songPath, newName } = req.body;
+
   const splitPath = songPath.split('/');
   const copyPath = splitPath[0] + '/' + splitPath[1] + '/' + splitPath[2] + '/' + newName;
   const copyParams = {
@@ -98,16 +96,29 @@ app.post('/update', (req, res) => {
     CopySource: '/bryce-graves/' + songPath,
     Key: copyPath,
   };
+
   const deleteParams = {
     Bucket: 'bryce-graves',
     Key: songPath,
   };
+
   s3.copyObject(copyParams)
     .promise()
     .then(() => {
-      s3.deleteObject(deleteParams).promise();
+      s3.deleteObject(deleteParams)
+        .promise()
+        .then(() => {
+          res.send('Success');
+        })
+        .catch((err) => {
+          console.log('Failed to delete song: ', err);
+          res.status(500).send('Failed to delete song');
+        });
+    })
+    .catch((err) => {
+      console.log('Failed updating song: ', err);
+      res.status(500).send('Failed updating song');
     });
-  dispatch(songUpdate(splitPath, newName));
 });
 
 app.listen(port, () => console.log(`Server be listening on port ${port}!`));
