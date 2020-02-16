@@ -5,7 +5,7 @@ const uuid = require('uuid');
 const multer = require('multer');
 const app = express();
 const upload = multer();
-const port = 8080;
+const port = 443;
 
 const AWS = require('aws-sdk');
 AWS.config.region = 'us-east-1';
