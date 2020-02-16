@@ -28,6 +28,10 @@ app.get('/fetchSongs/:id', (req, res) => {
     } else {
       Promise.all(
         data.Contents.map((bucketResource) => {
+          if (bucketResource.Size === 0) {
+            return null;
+          }
+
           const [, artist, album, title] = bucketResource.Key.split('/');
           return { artist, album, title };
         })
@@ -35,22 +39,30 @@ app.get('/fetchSongs/:id', (req, res) => {
         .then((resourceArray) => {
           let resourceData = {};
           resourceArray.forEach((resource) => {
-            const tempData = {};
+            if (!resource) {
+              return;
+            }
             const {
               artist = resource.artist || 'Unknown',
               album = resource.album || 'Unknown',
               title = resource.title || 'Unknown',
             } = resource;
 
-            tempData[artist] = {};
-            tempData[artist][album] = [
+            if (!resourceData[artist]) {
+              resourceData[artist] = {};
+            }
+
+            if (!resourceData[artist][album]) {
+              resourceData[artist][album] = [];
+            }
+
+            resourceData[artist][album] = [
+              ...resourceData[artist][album],
               {
                 name: title,
                 key: id + '/' + artist + '/' + album + '/' + title,
               },
             ];
-
-            resourceData = { ...resourceData, ...tempData };
           });
           res.send(resourceData);
         })
