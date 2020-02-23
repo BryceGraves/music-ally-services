@@ -1,136 +1,207 @@
 const express = require('express');
 const cors = require('cors');
-const mm = require('music-metadata');
-const uuid = require('uuid');
-const multer = require('multer');
-const app = express();
-const upload = multer();
 const port = 8080;
 
 const AWS = require('aws-sdk');
 AWS.config.region = 'us-east-1';
 
+const db = new AWS.DynamoDB();
 const s3 = new AWS.S3({ apiVersion: '2006-03-01' });
 
+const app = express();
 app.use(express.json());
 app.use(cors());
 
-app.get('/fetchSongs/:id', (req, res) => {
-  const id = req.params.id;
-  const getParams = {
-    Bucket: 'bryce-graves',
-    Prefix: id,
+app.get('/', (req, res) => {
+  res.send("OWO what's this? A server?!");
+});
+
+app.get('/fetchSongs', (req, res) => {
+  const dynamoParams = {
+    TableName: 'music',
   };
 
-  s3.listObjectsV2(getParams, (err, data) => {
+  db.scan(dynamoParams, (err, data) => {
     if (err) {
-      console.log(err, err.stack);
-    } else {
-      Promise.all(
-        data.Contents.map((bucketResource) => {
-          if (bucketResource.Size === 0) {
-            return null;
-          }
-
-          const [, artist, album, title] = bucketResource.Key.split('/');
-          return { artist, album, title };
-        })
-      )
-        .then((resourceArray) => {
-          let resourceData = {};
-          resourceArray.forEach((resource) => {
-            if (!resource) {
-              return;
-            }
-            const {
-              artist = resource.artist || 'Unknown',
-              album = resource.album || 'Unknown',
-              title = resource.title || 'Unknown',
-            } = resource;
-
-            if (!resourceData[artist]) {
-              resourceData[artist] = {};
-            }
-
-            if (!resourceData[artist][album]) {
-              resourceData[artist][album] = [];
-            }
-
-            resourceData[artist][album] = [
-              ...resourceData[artist][album],
-              {
-                name: title,
-                key: id + '/' + artist + '/' + album + '/' + title,
-              },
-            ];
-          });
-          res.send(resourceData);
-        })
-        .catch((err) => {
-          console.log('Failed fetching songs: ', err);
-          res.status(500).send('Failed fetching songs');
-        });
+      console.log(err);
+      return res.status(500).send({ message: err.message });
     }
+
+    console.log('Raw Data: ', data);
+
+    let resourceData = {};
+    data.Items.forEach((item) => {
+      const { Genre, Artist, Album, Song } = item;
+
+      if (!resourceData[Artist.S]) {
+        resourceData[Artist.S] = {};
+      }
+
+      if (!resourceData[Artist.S][Album.S]) {
+        resourceData[Artist.S][Album.S] = [];
+      }
+
+      resourceData[Artist.S][Album.S] = [
+        ...resourceData[Artist.S][Album.S],
+        {
+          name: Song.S,
+          key: Genre.S + '/' + Artist.S + '/' + Album.S + '/' + Song.S,
+        },
+      ];
+    });
+
+    console.log('Processed Data: ', resourceData);
+
+    return res.status(200).send(resourceData);
   });
 });
 
-app.get('/fetchSong/:id/:artist/:album/:song', (req, res) => {
-  const { id, artist, album, song } = req.params;
-  const signedUrlPrams = {
-    Bucket: 'bryce-graves',
-    Key: id + '/' + artist + '/' + album + '/' + song,
-    Expires: 60 * 60,
+app.get('/genres', (req, res) => {
+  const dynamoParams = {
+    TableName: 'music',
   };
 
-  s3.getSignedUrlPromise('getObject', signedUrlPrams)
-    .then((signedUrl) => {
-      res.send(signedUrl);
-    })
-    .catch((err) => {
-      console.log('Failed fetching signed url: ', err);
-      res.status(500).send('Failed fetching signed url');
-    });
+  db.scan(dynamoParams, (err, data) => {
+    if (err) {
+      console.log(err);
+      return res.status(500).send({ message: err.message });
+    }
+
+    console.log('Raw Data: ', data);
+
+    const allGenreItems = data.Items.map((item) => item.Genre.S);
+    const genres = [...new Set(allGenreItems)];
+
+    console.log('Processed Data: ', genres);
+
+    return res.status(200).send(genres);
+  });
 });
 
-app.post('/upload', upload.array(), (req, res, next) => {
-  console.log('Main Body: ', req.body);
-  console.log(req.readable);
-  res.send('Success');
+app.get('/artists/for/genre', (req, res) => {
+  const dynamoParams = {
+    TableName: 'music',
+    KeyConditionExpression: 'Genre = :Genre',
+    ExpressionAttributeValues: {
+      ':Genre': {
+        S: req.query.genre,
+      },
+    },
+  };
+
+  db.query(dynamoParams, (err, data) => {
+    if (err) {
+      console.log(err);
+      return res.status(500).send({ message: err.message });
+    }
+
+    console.log('Raw Data: ', data);
+
+    const queryFilteredByArtist = data.Items.map((item) => item.Artist.S);
+    const artists = [...new Set(queryFilteredByArtist)];
+
+    console.log('Processed Data: ', artists);
+
+    return res.status(200).send(artists);
+  });
 });
 
-app.post('/updateSong', (req, res) => {
-  const { songPath, newName } = req.body;
-
-  const splitPath = songPath.split('/');
-  const copyPath = splitPath[0] + '/' + splitPath[1] + '/' + splitPath[2] + '/' + newName;
-  const copyParams = {
-    Bucket: 'bryce-graves',
-    CopySource: '/bryce-graves/' + songPath,
-    Key: copyPath,
+app.get('/albums/for/artist', (req, res) => {
+  const dynamoParams = {
+    TableName: 'music',
+    IndexName: 'ArtistIndex',
+    KeyConditionExpression: 'Artist = :Artist',
+    ExpressionAttributeValues: {
+      ':Artist': {
+        S: req.query.artist,
+      },
+    },
   };
 
-  const deleteParams = {
-    Bucket: 'bryce-graves',
-    Key: songPath,
+  db.query(dynamoParams, (err, data) => {
+    if (err) {
+      console.log(err);
+      return res.status(500).send({ message: err.message });
+    }
+
+    console.log('Raw Data: ', data);
+
+    const queryFilteredByAlbums = data.Items.map((item) => item.Album.S);
+    const albums = [...new Set(queryFilteredByAlbums)];
+
+    console.log('Processed Data: ', albums);
+
+    return res.status(200).send(albums);
+  });
+});
+
+app.get('/songs/for/album', (req, res) => {
+  const dynamoParams = {
+    TableName: 'music',
+    IndexName: 'AlbumIndex',
+    KeyConditionExpression: 'Album = :Album',
+    ExpressionAttributeValues: {
+      ':Album': {
+        S: req.query.album,
+      },
+    },
   };
 
-  s3.copyObject(copyParams)
-    .promise()
-    .then(() => {
-      s3.deleteObject(deleteParams)
-        .promise()
-        .then(() => {
-          res.send('Success');
-        })
-        .catch((err) => {
-          console.log('Failed to delete song: ', err);
-          res.status(500).send('Failed to delete song');
-        });
-    })
-    .catch((err) => {
-      console.log('Failed updating song: ', err);
-      res.status(500).send('Failed updating song');
-    });
+  db.query(dynamoParams, (err, data) => {
+    if (err) {
+      console.log(err);
+      return res.status(500).send({ message: err.message });
+    }
+
+    console.log('Raw Data: ', data);
+
+    const songs = data.Items.map((item) => item.Song.S);
+
+    console.log('Processed Data: ', songs);
+
+    return res.status(200).send(songs);
+  });
+});
+
+app.get('/song', (req, res) => {
+  const dynamoParams = {
+    TableName: 'music',
+    IndexName: 'SongIndex',
+    KeyConditionExpression: 'Song = :Song',
+    ExpressionAttributeValues: {
+      ':Song': {
+        S: req.query.song,
+      },
+    },
+  };
+
+  db.query(dynamoParams, (err, data) => {
+    if (err) {
+      console.log(err);
+      return res.status(500).send({ message: err.message });
+    }
+
+    console.log('Raw Data: ', data);
+
+    const databasePath = data.Items && data.Items.length > 0 ? data.Items[0].DatabasePath.S : null;
+
+    console.log('Processed Data: ', databasePath);
+
+    const signedUrlPrams = {
+      Bucket: 'bryce-graves',
+      Key: databasePath,
+      Expires: 60 * 60,
+    };
+
+    s3.getSignedUrlPromise('getObject', signedUrlPrams)
+      .then((signedUrl) => {
+        res.send(signedUrl);
+      })
+      .catch((err) => {
+        console.log('Failed fetching signed url: ', err);
+        res.status(500).send('Failed fetching signed url');
+      });
+  });
 });
 
 app.listen(port, () => console.log(`Server be listening on port ${port}!`));
