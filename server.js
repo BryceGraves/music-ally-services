@@ -5,7 +5,7 @@ const port = 8080;
 const AWS = require('aws-sdk');
 AWS.config.region = 'us-east-1';
 
-const db = new AWS.DynamoDB();
+const db = new AWS.DynamoDB.DocumentClient();
 const s3 = new AWS.S3({ apiVersion: '2006-03-01' });
 
 const app = express();
@@ -33,23 +33,23 @@ app.get('/fetchSongs', (req, res) => {
     data.Items.forEach((item) => {
       const { Genre, Artist, Album, Song } = item;
 
-      if (!resourceData[Genre.S]) {
-        resourceData[Genre.S] = {};
+      if (!resourceData[Genre]) {
+        resourceData[Genre] = {};
       }
 
-      if (!resourceData[Genre.S][Artist.S]) {
-        resourceData[Genre.S][Artist.S] = {};
+      if (!resourceData[Genre][Artist]) {
+        resourceData[Genre][Artist] = {};
       }
 
-      if (!resourceData[Genre.S][Artist.S][Album.S]) {
-        resourceData[Genre.S][Artist.S][Album.S] = [];
+      if (!resourceData[Genre][Artist][Album]) {
+        resourceData[Genre][Artist][Album] = [];
       }
 
-      resourceData[Genre.S][Artist.S][Album.S] = [
-        ...resourceData[Genre.S][Artist.S][Album.S],
+      resourceData[Genre][Artist][Album] = [
+        ...resourceData[Genre][Artist][Album],
         {
-          name: Song.S,
-          key: Genre.S + '/' + Artist.S + '/' + Album.S + '/' + Song.S,
+          name: Song,
+          key: Genre + '/' + Artist + '/' + Album + '/' + Song,
         },
       ];
     });
@@ -73,7 +73,7 @@ app.get('/genres', (req, res) => {
 
     console.log('Raw Data: ', data);
 
-    const allGenreItems = data.Items.map((item) => item.Genre.S);
+    const allGenreItems = data.Items.map((item) => item.Genre);
     const genres = [...new Set(allGenreItems)];
 
     console.log('Processed Data: ', genres);
@@ -87,9 +87,7 @@ app.get('/artists/for/genre', (req, res) => {
     TableName: 'music',
     KeyConditionExpression: 'Genre = :Genre',
     ExpressionAttributeValues: {
-      ':Genre': {
-        S: req.query.genre,
-      },
+      ':Genre': req.query.genre,
     },
   };
 
@@ -101,7 +99,7 @@ app.get('/artists/for/genre', (req, res) => {
 
     console.log('Raw Data: ', data);
 
-    const queryFilteredByArtist = data.Items.map((item) => item.Artist.S);
+    const queryFilteredByArtist = data.Items.map((item) => item.Artist);
     const artists = [...new Set(queryFilteredByArtist)];
 
     console.log('Processed Data: ', artists);
@@ -116,9 +114,7 @@ app.get('/albums/for/artist', (req, res) => {
     IndexName: 'ArtistIndex',
     KeyConditionExpression: 'Artist = :Artist',
     ExpressionAttributeValues: {
-      ':Artist': {
-        S: req.query.artist,
-      },
+      ':Artist': req.query.artist,
     },
   };
 
@@ -130,7 +126,7 @@ app.get('/albums/for/artist', (req, res) => {
 
     console.log('Raw Data: ', data);
 
-    const queryFilteredByAlbums = data.Items.map((item) => item.Album.S);
+    const queryFilteredByAlbums = data.Items.map((item) => item.Album);
     const albums = [...new Set(queryFilteredByAlbums)];
 
     console.log('Processed Data: ', albums);
@@ -145,9 +141,7 @@ app.get('/songs/for/album', (req, res) => {
     IndexName: 'AlbumIndex',
     KeyConditionExpression: 'Album = :Album',
     ExpressionAttributeValues: {
-      ':Album': {
-        S: req.query.album,
-      },
+      ':Album': req.query.album,
     },
   };
 
@@ -159,7 +153,7 @@ app.get('/songs/for/album', (req, res) => {
 
     console.log('Raw Data: ', data);
 
-    const songs = data.Items.map((item) => item.Song.S);
+    const songs = data.Items.map((item) => item.Song);
 
     console.log('Processed Data: ', songs);
 
@@ -173,9 +167,7 @@ app.get('/song', (req, res) => {
     IndexName: 'SongIndex',
     KeyConditionExpression: 'Song = :Song',
     ExpressionAttributeValues: {
-      ':Song': {
-        S: req.query.song,
-      },
+      ':Song': req.query.song,
     },
   };
 
@@ -187,7 +179,7 @@ app.get('/song', (req, res) => {
 
     console.log('Raw Data: ', data);
 
-    const databasePath = data.Items && data.Items.length > 0 ? data.Items[0].DatabasePath.S : null;
+    const databasePath = data.Items && data.Items.length > 0 ? data.Items[0].DatabasePath : null;
 
     console.log('Processed Data: ', databasePath);
 
@@ -214,15 +206,15 @@ app.post('/addSong', (req, res) => {
   const dynamoParams = {
     TableName: 'music',
     Item: {
-      Genre: { S: Genre },
-      DatabasePath: { S: Genre + '/' + Artist + '/' + Album + '/' + Song },
-      Artist: { S: Artist },
-      Album: { S: Album },
-      Song: { S: Song },
+      Genre,
+      DatabasePath: Artist + '/' + Album + '/' + Song,
+      Artist,
+      Album,
+      Song,
     },
   };
 
-  db.putItem(dynamoParams, (err, data) => {
+  db.put(dynamoParams, (err, data) => {
     if (err) {
       console.log('Error: ', err);
     } else {
@@ -233,19 +225,43 @@ app.post('/addSong', (req, res) => {
 });
 
 app.post('/updateSong', (req, res) => {
-  const { songPath, newName } = req.body;
+  const { newPath, oldPath } = req.body;
 
-  const splitPath = songPath.split('/');
-  const dynamoParams = {
+  const splitNewPath = newPath.split('/');
+  const splitOldPath = oldPath.split('/');
+
+  const dynamoDeleteParams = {
     TableName: 'music',
-    IndexName: 'SongIndex',
-    KeyConditionExpression: 'Song = :Song',
-    ExpressionAttributeValues: {
-      ':Song': {
-        S: req.query.song,
-      },
+    Key: {
+      Genre: splitOldPath[0],
+      DatabasePath: splitOldPath[1] + '/' + splitOldPath[2] + '/' + splitOldPath[3],
     },
   };
+
+  const dynamoPutParams = {
+    TableName: 'music',
+    Item: {
+      Genre: splitNewPath[0],
+      DatabasePath: splitNewPath[1] + '/' + splitNewPath[2] + '/' + splitNewPath[3],
+      Artist: splitNewPath[1],
+      Album: splitNewPath[2],
+      Song: splitNewPath[3],
+    },
+  };
+
+  db.delete(dynamoDeleteParams, (err) => {
+    if (err) {
+      console.log('Error Deleting: ', err);
+    } else {
+      db.put(dynamoPutParams, (err) => {
+        if (err) {
+          console.log('Error Putting: ', err);
+        } else {
+          res.status(200).send('Song Updated');
+        }
+      });
+    }
+  });
 });
 
 app.listen(port, () => console.log(`Server be listening on port ${port}!`));
