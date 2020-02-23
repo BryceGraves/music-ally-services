@@ -11,9 +11,10 @@
     "cors": "^2.8.5",
     "express": "^4.17.1",
     "multer": "^1.4.2",
-    "music-metadata": "^6.3.3"
+    "music-metadata": "^6.3.3",
+    "pm2": "^4.2.3"
   },
   "scripts": {
-    "start": "node server.js"
+    "start": "pm2 start server.js --watch"
   }
 }
