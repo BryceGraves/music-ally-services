@@ -33,16 +33,20 @@ app.get('/fetchSongs', (req, res) => {
     data.Items.forEach((item) => {
       const { Genre, Artist, Album, Song } = item;
 
-      if (!resourceData[Artist.S]) {
-        resourceData[Artist.S] = {};
+      if (!resourceData[Genre.S]) {
+        resourceData[Genre.S] = {};
       }
 
-      if (!resourceData[Artist.S][Album.S]) {
-        resourceData[Artist.S][Album.S] = [];
+      if (!resourceData[Genre.S][Artist.S]) {
+        resourceData[Genre.S][Artist.S] = {};
       }
 
-      resourceData[Artist.S][Album.S] = [
-        ...resourceData[Artist.S][Album.S],
+      if (!resourceData[Genre.S][Artist.S][Album.S]) {
+        resourceData[Genre.S][Artist.S][Album.S] = [];
+      }
+
+      resourceData[Genre.S][Artist.S][Album.S] = [
+        ...resourceData[Genre.S][Artist.S][Album.S],
         {
           name: Song.S,
           key: Genre.S + '/' + Artist.S + '/' + Album.S + '/' + Song.S,
@@ -202,6 +206,46 @@ app.get('/song', (req, res) => {
         res.status(500).send('Failed fetching signed url');
       });
   });
+});
+
+app.post('/addSong', (req, res) => {
+  const { Genre, Artist, Album, Song } = req.body;
+
+  const dynamoParams = {
+    TableName: 'music',
+    Item: {
+      Genre: { S: Genre },
+      DatabasePath: { S: Genre + '/' + Artist + '/' + Album + '/' + Song },
+      Artist: { S: Artist },
+      Album: { S: Album },
+      Song: { S: Song },
+    },
+  };
+
+  db.putItem(dynamoParams, (err, data) => {
+    if (err) {
+      console.log('Error: ', err);
+    } else {
+      console.log('Success: ', data);
+      res.status(200).send(data);
+    }
+  });
+});
+
+app.post('/updateSong', (req, res) => {
+  const { songPath, newName } = req.body;
+
+  const splitPath = songPath.split('/');
+  const dynamoParams = {
+    TableName: 'music',
+    IndexName: 'SongIndex',
+    KeyConditionExpression: 'Song = :Song',
+    ExpressionAttributeValues: {
+      ':Song': {
+        S: req.query.song,
+      },
+    },
+  };
 });
 
 app.listen(port, () => console.log(`Server be listening on port ${port}!`));
