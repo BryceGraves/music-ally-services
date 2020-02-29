@@ -252,14 +252,39 @@ app.post('/updateSong', (req, res) => {
   db.delete(dynamoDeleteParams, (err) => {
     if (err) {
       console.log('Error Deleting: ', err);
+      res.status(500).send('Could not delete song entry');
     } else {
       db.put(dynamoPutParams, (err) => {
         if (err) {
           console.log('Error Putting: ', err);
+          res.status(500).send('Could not add song entry');
         } else {
           res.status(200).send('Song Updated');
         }
       });
+    }
+  });
+});
+
+app.post('/save-user', (req, res) => {
+  const { Id, Email, Name } = req.body;
+
+  const dynamoParams = {
+    TableName: 'users',
+    Item: {
+      Id,
+      Email,
+      Name,
+    },
+  };
+
+  db.put(dynamoParams, (err, data) => {
+    if (err) {
+      console.log('Error: ', err);
+      res.status(500).send('Could not save user');
+    } else {
+      console.log('Success: ', data);
+      res.status(200).send('User Added');
     }
   });
 });
