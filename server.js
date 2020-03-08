@@ -4,9 +4,10 @@ const port = 8080;
 
 const AWS = require('aws-sdk');
 AWS.config.region = 'us-east-1';
-
 const db = new AWS.DynamoDB.DocumentClient();
 const s3 = new AWS.S3({ apiVersion: '2006-03-01' });
+
+const sqs = new AWS.SQS();
 
 const app = express();
 app.use(express.json());
@@ -263,6 +264,28 @@ app.post('/updateSong', (req, res) => {
         }
       });
     }
+  });
+});
+
+app.post('/play', (req, res) => {
+  const { artist, album, song } = req.body;
+  const body = {
+    artist,
+    album,
+    song,
+  };
+
+  const sendMessageParams = {
+    QueueUrl: 'https://sqs.us-east-1.amazonaws.com/576322095525/MusicAlly',
+    MessageBody: JSON.stringify(body),
+  };
+
+  sqs.sendMessage(sendMessageParams, (err, data) => {
+    if (err) {
+      return res.status(500).send({ message: err.message });
+    }
+
+    return res.status(200).send('Song queued');
   });
 });
 
